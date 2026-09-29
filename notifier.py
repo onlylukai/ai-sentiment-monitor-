@@ -3,7 +3,7 @@
 import requests
 from datetime import datetime
 from typing import Dict
-from config import WECHAT_BOT_WEBHOOK, ALERT_THRESHOLD
+from config import WECHAT_BOT_WEBHOOK, ALERT_LOW_SCORE, ALERT_NEGATIVE_RATIO
 
 
 class Notifier:
@@ -34,14 +34,18 @@ class Notifier:
         if total == 0:
             return False
 
-        # 负面占比超过 30%
-        negative_ratio = stats.get("negative", 0) / total
-        if negative_ratio > 0.3:
+        # 条件1：负面占比过高
+        negative_ratio = (stats.get("negative") or 0) / total
+        if negative_ratio > ALERT_NEGATIVE_RATIO:
             return True
 
-        # 平均情感分数低于阈值
-        if stats.get("avg_sentiment", 0.5) < ALERT_THRESHOLD:
+        # 条件2：平均情感明显偏低（中性 0.5 不触发，只有真正偏负面才报警）
+        avg = stats.get("avg_sentiment") or 0.5
+        if avg < ALERT_LOW_SCORE:
             return True
+
+        # 条件3：负面占比上升（相对历史）
+        return False
 
         # 情感波动大（标准差大）
         # 这里简化处理
@@ -53,7 +57,7 @@ class Notifier:
         total = stats.get("total", 0)
         negative = stats.get("negative", 0)
         positive = stats.get("positive", 0)
-        avg = stats.get("avg_sentiment", 0)
+        avg = stats.get("avg_sentiment") or 0.5
 
         message = f"""🚨 舆情预警通知
 
@@ -70,10 +74,10 @@ class Notifier:
 
         # 判断预警原因
         reasons = []
-        if negative / max(total, 1) > 0.3:
-            reasons.append(f"负面占比 {negative / max(total, 1) * 100:.1f}% 超过 30%")
-        if avg < ALERT_THRESHOLD:
-            reasons.append(f"平均情感分 {avg:.2f} 低于阈值 {ALERT_THRESHOLD}")
+        if negative / max(total, 1) > ALERT_NEGATIVE_RATIO:
+            reasons.append(f"负面占比 {negative / max(total, 1) * 100:.1f}% 超过阈值 {ALERT_NEGATIVE_RATIO*100:.0f}%")
+        if avg < ALERT_LOW_SCORE:
+            reasons.append(f"平均情感分 {avg:.2f} 低于预警线 {ALERT_LOW_SCORE}")
 
         message += "\n".join([f"• {r}" for r in reasons]) if reasons else "• 综合判断"
 

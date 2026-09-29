@@ -16,7 +16,9 @@ WECHAT_BOT_WEBHOOK = os.getenv("WECHAT_BOT_WEBHOOK", "")
 
 # 监控配置
 DEFAULT_INTERVAL = int(os.getenv("DEFAULT_INTERVAL", "30"))
-ALERT_THRESHOLD = float(os.getenv("ALERT_THRESHOLD", "0.7"))
+ALERT_LOW_SCORE = float(os.getenv("ALERT_LOW_SCORE", "0.35"))
+ALERT_NEGATIVE_RATIO = float(os.getenv("ALERT_NEGATIVE_RATIO", "0.30"))
+ALERT_THRESHOLD = ALERT_LOW_SCORE  # 兼容旧配置名
 TOP_KEYWORDS_COUNT = int(os.getenv("TOP_KEYWORDS_COUNT", "20"))
 MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", "100"))
 

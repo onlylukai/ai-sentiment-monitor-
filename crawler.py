@@ -1,5 +1,6 @@
 """AI 舆情监控系统 - 爬虫模块"""
 
+import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -45,49 +46,94 @@ class Crawler:
 
         return articles[:limit]
 
+    # 百科/文档/答问类站点：对舆情监控无意义，过滤掉
+    # 词典 / 问答 / 文档搬运站：对舆情监控没有价值，全部过滤
+    EXCLUDE_DOMAINS = (
+        "baike.baidu.com", "zhidao.baidu.com", "baijiahao.baidu.com",
+        "www.zhihu.com", "m.zhihu.com", "zhuanlan.zhihu.com",
+        "hanyuguoxue.com", "hgcha.com", "chazidian.com", "gushici.net",
+        "guoxuemao.com", "cidianwang.com", "cidian.55088.com", "hanwu.cn",
+        "xuehu.cn", "docin.com", "book118.com", "taodocs.com", "doc88.com",
+        "360doc.com", "renrendoc.com", "haokan.baidu.com", "ishare.cn",
+        "max.book118.com", "www.docin.com", "m.book118.com",
+        "www.toutiao.com/article", "www.toutiao.com/zixun",
+    )
+
+    def _split_topics(self, topic: str) -> List[str]:
+        """把 "人工智能 教育 政策" 拆成独立子话题，逐个查询。
+
+        单个连贯词在 Bing 上召回质量远高于多词 AND 查询
+        （多词 AND 会被词典/问答站刷版）。
+        """
+        return [w.strip() for w in re.split(r'[\s,，、/]+', topic) if w.strip()]
+
+    def _query(self, topic: str) -> str:
+        """规整单个查询词，去掉多余空白"""
+        return re.sub(r'\s+', ' ', topic.strip())
+
     def _fetch_bing(self, topic: str, limit: int) -> List[Dict]:
         """抓取 Bing 搜索结果（主数据源）"""
         import urllib.parse
-        url = f"https://www.bing.com/search?q={urllib.parse.quote(topic)}"
-        response = self._request(url)
+        subs = self._split_topics(topic)
+        # 多个子话题时均分额度，逐个查询后合并
+        per = max(1, limit // max(len(subs), 1))
+        all_items = []
+        for sub in subs[:6]:  # 最多 6 个子话题
+            sub_url = (
+                f"https://www.bing.com/search?q={urllib.parse.quote(self._query(sub))}"
+                "&setlang=zh-Hans&cc=CN"
+            )
+            try:
+                resp = self._request(sub_url)
+                if resp:
+                    all_items.append(BeautifulSoup(resp.text, 'lxml'))
+            except Exception as e:
+                print(f"  子话题「{sub}」抓取失败：{e}")
 
-        if not response:
+        if not all_items:
             return []
 
-        soup = BeautifulSoup(response.text, 'lxml')
         articles = []
+        seen = set()
 
-        for item in soup.select('li.b_algo'):
-            # Bing 的 b_algo 里第一个 <a> 是域名徽章，真正的标题在 <h2> 内
-            h2 = item.find('h2')
-            a = h2.find('a') if h2 else item.select_one('h2 a')
-            if not a:
-                continue
-            title = a.get_text(strip=True)
-            link = a.get('href')
+        for soup in all_items:
+            for item in soup.select('li.b_algo'):
+                # Bing 的 b_algo 里第一个 <a> 是域名徽章，真正的标题在 <h2> 内
+                h2 = item.find('h2')
+                a = h2.find('a') if h2 else item.select_one('h2 a')
+                if not a:
+                    continue
+                title = a.get_text(strip=True)
+                link = a.get('href')
 
-            # 清理标题里的面包屑分隔符与省略号
-            for sep in ("\u203a", "›"):
-                if sep in title:
-                    title = title.split(sep)[-1].strip()
-            title = title.replace("\u2026", "").replace(" ...", "").strip()
-            if len(title) < 6:
-                continue
+                # 清理标题里的面包屑分隔符与省略号
+                for sep in ("\u203a", "›"):
+                    if sep in title:
+                        title = title.split(sep)[-1].strip()
+                title = title.replace("\u2026", "").replace(" ...", "").strip()
+                if len(title) < 6 or not link:
+                    continue
 
-            p = item.find('p')
-            snippet = p.get_text(strip=True) if p else ""
+                # 去重 + 过滤百科/文档站点
+                if link in seen or any(d in link for d in self.EXCLUDE_DOMAINS):
+                    continue
 
-            articles.append({
-                "title": title,
-                "content": snippet,
-                "source": "Bing",
-                "url": link,
-                "collected_at": datetime.now().isoformat(),
-                "topic": topic,
-            })
+                p = item.find('p')
+                snippet = p.get_text(strip=True) if p else ""
+                snippet = re.sub(r'\s*阅读更多\s*$', '', snippet)
 
-            if len(articles) >= limit:
-                break
+                seen.add(link)
+                articles.append({
+                    "title": title,
+                    "content": snippet,
+                    "source": "Bing",
+                    "url": link,
+                    "collected_at": datetime.now().isoformat(),
+                    "topic": topic,
+                })
+
+                if len(articles) >= limit:
+                    break
 
         return articles
 

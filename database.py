@@ -155,13 +155,23 @@ def save_keyword(keyword: str, count: int, topic: str):
     now = datetime.now().isoformat()
 
     try:
-        cursor.execute('''
-            INSERT INTO keywords (keyword, count, first_seen, last_seen, topic)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT DO UPDATE SET
-                count = count + ?,
-                last_seen = ?
-        ''', (keyword, count, now, now, topic, count, now))
+        # 按 (keyword, topic) 累加；keywords 表无唯一约束，用 SELECT 判重
+        cursor.execute(
+            'SELECT id FROM keywords WHERE keyword = ? AND topic = ?',
+            (keyword, topic),
+        )
+        row = cursor.fetchone()
+        if row:
+            cursor.execute(
+                'UPDATE keywords SET count = count + ?, last_seen = ? WHERE id = ?',
+                (count, now, row[0]),
+            )
+        else:
+            cursor.execute(
+                'INSERT INTO keywords (keyword, count, first_seen, last_seen, topic) '
+                'VALUES (?, ?, ?, ?, ?)',
+                (keyword, count, now, now, topic),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -206,7 +216,11 @@ def get_stats(topic: str) -> Dict:
         ''', (topic,))
 
         row = cursor.fetchone()
-        return dict(row)
+        stats = dict(row)
+        # SQLite 的 SUM/AVG 在空表时返回 NULL，统一转 0 避免下游格式化崩溃
+        for k in ("total", "positive", "negative", "neutral", "avg_sentiment"):
+            stats[k] = stats.get(k) or 0
+        return stats
     finally:
         conn.close()
 

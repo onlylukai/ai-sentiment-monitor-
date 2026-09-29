@@ -77,12 +77,20 @@ class SentimentAnalyzer:
             return self._simple_analyze(text)
 
     def _simple_analyze(self, text: str) -> Dict:
-        """简单情感分析（无 AI 时）"""
-        positive_words = ["好", "优秀", "成功", "进步", "发展", "创新", "支持", "积极", "增长", "突破"]
-        negative_words = ["差", "失败", "问题", "风险", "危机", "下降", "亏损", "负面", "警告", "担忧"]
+        """基础情感分析（无 AI 或 AI 失败时的兜底）"""
+        positive_words = [
+            "好", "优秀", "成功", "进步", "发展", "创新", "支持", "积极",
+            "增长", "突破", "提升", "高质量", "赋能", "引领", "繁荣", "机遇",
+            "促进", "推动", "深化", "升级", "领先", "红利", "成效",
+        ]
+        negative_words = [
+            "失败", "风险", "危机", "下降", "亏损", "负面", "警告", "担忧",
+            "挑战", "制约", "不足", "困难", "落后", "瓶颈", "乱象",
+            "滥用", "造假", "泄密", "失控", "争议", "投诉", "乱象", "隐患",
+        ]
 
-        pos_count = sum(1 for word in positive_words if word in text)
-        neg_count = sum(1 for word in negative_words if word in text)
+        pos_count = sum(1 for w in positive_words if w in text)
+        neg_count = sum(1 for w in negative_words if w in text)
 
         if pos_count > neg_count:
             score = min(1.0, 0.5 + (pos_count - neg_count) * 0.1)
@@ -94,17 +102,50 @@ class SentimentAnalyzer:
             score = 0.5
             label = "neutral"
 
-        # 提取关键词（简单分词）
-        import re
-        words = re.findall(r'[\u4e00-\u9fff]+', text)
-        keywords = sorted(set(w for w in words if len(w) >= 2), key=len, reverse=True)[:10]
+        keywords = self._extract_keywords(text)
 
         return {
             "score": score,
             "label": label,
             "keywords": keywords,
-            "analysis": f"简单分析：正面 {pos_count}，负面 {neg_count}",
+            "analysis": f"基础分析：正面 {pos_count}，负面 {neg_count}",
         }
+
+    # 中文停用词（最小集，避免把内容词过滤掉）
+    _STOPWORDS = set("""
+    的 了 在 是 和 与 及 等 也 都 就 而 于 为 以 从 向 对 被 把 这 那 有 无 个
+    一 不 很 更 最 会 能 要 将 已 并 或 但 却 其 之 所 者 上 下 中 前 后 里 内 外
+    什么 怎么 如何 我们 你们 他们 可以 因为 所以 如果 虽然 但是 以及 进行 通过
+    对于 关于 其中 目前 已经 一个 一直 不是 成为 作为 表示 说明 相关 方面 工作
+    内容 时间 地区 方式 系统 中国 全球 世界 国家 企业 行业 重要 大量 部分
+    主要 全面 积极 大力 不断 持续 深入 广泛 进一步 实现 构建 加强 提升 建设
+    服务 提供 支持 促进 推动 深化 完善 优化 开展 报告 文件 页面 搜索 阅读 更多
+    缩写 编者按 引言 一门 一个 两个 三者 之一 之中 以上 以下 之间 之内 之后
+    指出 强调 提出 强调 认为 表示 强调 强调 强调 强调 强调 强调 强调 强调
+    """.split())
+
+    @classmethod
+    def _extract_keywords(cls, text: str, top_n: int = 8) -> List[str]:
+        """jieba 分词 + 停用词过滤 + 词频排序，输出真实关键词"""
+        import re
+        from collections import Counter
+
+        text = re.sub(r'[\d\s]+', ' ', text)
+
+        try:
+            import jieba
+            tokens = [t.strip() for t in jieba.lcut(text) if t.strip()]
+        except Exception:
+            tokens = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
+
+        counter = Counter(
+            t for t in tokens
+            if len(t) >= 2
+            and t not in cls._STOPWORDS
+            and re.fullmatch(r'[\u4e00-\u9fff]{2,6}', t)
+        )
+
+        return [w for w, _ in counter.most_common(top_n)]
 
     def analyze_articles(self, articles: List[Dict]) -> List[Dict]:
         """批量分析文章"""
