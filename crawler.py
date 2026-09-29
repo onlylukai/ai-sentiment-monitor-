@@ -47,6 +47,13 @@ class Crawler:
         return articles[:limit]
 
     # 百科/文档/答问类站点：对舆情监控无意义，过滤掉
+    # 产品官网 / 营销落地页：没有讨论内容，对舆情分析无价值
+    EXCLUDE_URL_PATTERNS = (
+        "/home", "/home/", "/pricing", "/signup", "/login", "/register",
+        "/download", "/download/", "/features", "/product", "/products",
+        "/about", "/about/", "/blog/ai-tool", "/ai-tool", "/tool/", "/tools/",
+    )
+
     # 词典 / 问答 / 文档搬运站：对舆情监控没有价值，全部过滤
     EXCLUDE_DOMAINS = (
         "baike.baidu.com", "zhidao.baidu.com", "baijiahao.baidu.com",
@@ -115,7 +122,10 @@ class Crawler:
                     continue
 
                 # 去重 + 过滤百科/文档站点
+                low = (link or "").lower()
                 if link in seen or any(d in link for d in self.EXCLUDE_DOMAINS):
+                    continue
+                if any(pt in low for pt in self.EXCLUDE_URL_PATTERNS):
                     continue
 
                 p = item.find('p')

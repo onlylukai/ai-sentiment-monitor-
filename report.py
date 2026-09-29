@@ -61,16 +61,52 @@ def save_markdown_report(topic, date, report, stats, articles, keywords) -> str:
     date_disp = datetime.now().strftime("%Y-%m-%d")
 
     # 列表先算好，避免 f-string 里嵌复杂表达式
+    # 按数据源分组：GitHub 有专属版块，其余走通用列表
+    gh = [a for a in articles if str(a.get("source", "")).startswith("GitHub")]
+    others = [a for a in articles if not str(a.get("source", "")).startswith("GitHub")]
+
     art_lines = []
-    for a in articles[:10]:
+    for a in others[:10]:
         t = a.get("title") or ""
         u = a.get("url") or ""
         label = a.get("sentiment_label") or "neutral"
         art_lines.append(f"- [{t}]({u}) - {label}")
 
+    repos_lines, issues_lines = [], []
+    for a in gh:
+        meta = a.get("meta") or {}
+        if a.get("source") == "GitHub-仓库" and meta.get("stars") is not None:
+            repos_lines.append(
+                f"| [{meta.get('repo', '')}]({a.get('url', '')}) | "
+                f"★{meta.get('stars', 0):,} | {meta.get('forks', 0):,} | {meta.get('open_issues', 0)} |"
+            )
+        elif a.get("source") == "GitHub-Issue":
+            comments = (a.get("meta") or {}).get("comments")
+            labels = (a.get("meta") or {}).get("labels") or "—"
+            repos_lines.append("")
+            issues_lines.append(
+                f"- [{a.get('title', '')}]({a.get('url', '')}) "
+                f"· 评论 {comments if comments is not None else '?'} 条 · 标签 {labels}"
+            )
+    # 仓库热度按 star 降序
+    repos_lines = sorted([l for l in repos_lines if l],
+                         key=lambda l: -int(l.split("|")[2].replace(",", "").replace("★", "").strip()))
+
     kw_lines = []
     for i, kw in enumerate(keywords, 1):
         kw_lines.append(f"| {i} | {kw.get('keyword', '')} | {kw.get('count', 0)} |")
+
+    # GitHub 专属版块
+    gh_block = ""
+    if repos_lines or issues_lines:
+        gh_block = "\n---\n\n## 🐙 GitHub 平台舆情\n\n"
+        if repos_lines:
+            gh_block += ("> 关注度与维持风险（open issues 越多越说明维护压力大）\n\n"
+                         "| 仓库 | 星标 | Forks | 待解决 issues |\n|------|------|-------|--------------|\n"
+                         + "\n".join(repos_lines) + "\n\n")
+        if issues_lines:
+            gh_block += ("### 讨论热点（按评论数排序）\n\n"
+                         + "\n".join(issues_lines) + "\n\n")
 
     content = f"""# 舆情分析报告
 
@@ -94,7 +130,9 @@ def save_markdown_report(topic, date, report, stats, articles, keywords) -> str:
 
 ## 📰 最新舆情
 
-{chr(10).join(art_lines) if art_lines else '_（暂无数据）_'}
+{chr(10).join(art_lines) if art_lines else '_（暂无新闻/网页数据）_'}
+
+{gh_block if (repos_lines or issues_lines) else ""}
 
 ---
 

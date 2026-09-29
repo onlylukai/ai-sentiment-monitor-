@@ -120,6 +120,9 @@ class SentimentAnalyzer:
     内容 时间 地区 方式 系统 中国 全球 世界 国家 企业 行业 重要 大量 部分
     主要 全面 积极 大力 不断 持续 深入 广泛 进一步 实现 构建 加强 提升 建设
     服务 提供 支持 促进 推动 深化 完善 优化 开展 报告 文件 页面 搜索 阅读 更多
+    天前 之前 之后 今天 昨天 今天 目前 现在 这里 那里 这个 那个 如何 为什么 可以 可能
+    区别 区别 依托 官网 官网 官网 首页 官网 官网 工具 工具集 官网 导航 下载 安装 使用
+    区别 区别 区别 区别 区别 区别 区别 区别 区别 区别 区别 区别 区别 区别 区别 区别
     缩写 编者按 引言 一门 一个 两个 三者 之一 之中 以上 以下 之间 之内 之后
     指出 强调 提出 强调 认为 表示 强调 强调 强调 强调 强调 强调 强调 强调
     """.split())
@@ -152,6 +155,15 @@ class SentimentAnalyzer:
         results = []
 
         for article in articles:
+            # 客观指标类条目（仓库热度等）不参与情感判定，避免"star 多=正面"的误判
+            if article.get("_skip_sentiment"):
+                article["sentiment_score"] = 0.5
+                article["sentiment_label"] = "neutral"
+                article["keywords"] = ",".join(self._extract_keywords(
+                    article.get("title", "") + " " + article.get("content", "")))
+                results.append(article)
+                continue
+
             text = article.get("content", article.get("title", ""))
             sentiment = self.analyze_sentiment(text)
 

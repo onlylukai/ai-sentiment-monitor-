@@ -9,11 +9,26 @@ from typing import List, Dict
 from config import DEFAULT_INTERVAL, ALERT_THRESHOLD, TOP_KEYWORDS_COUNT, MAX_ARTICLES
 from database import init_db, save_article, save_monitor_log, get_recent_articles, get_stats, save_keyword, get_top_keywords
 from crawler import Crawler
+from github_crawler import GitHubCrawler
+
+
+def collect_articles(topic: str, limit: int = MAX_ARTICLES, source: str = "web") -> list:
+    """统一的数据采集入口。
+
+    source="web"     → Bing 聚合搜索（默认）
+    source="github"  → GitHub 平台舆情（仓库热度 + issue 讨论）
+    """
+    if source == "github":
+        gh = GitHubCrawler()
+        left = gh.rate_left()
+        print(f"  GitHub API 剩余额度：{left}")
+        return gh.fetch_articles(topic, limit=limit)
+    return Crawler().fetch_news(topic, limit=limit)
 from analyzer import SentimentAnalyzer
 from notifier import Notifier
 
 
-def monitor_topic(topic: str, interval: int = None, platforms: list = None, limit: int = None):
+def monitor_topic(topic: str, interval: int = None, platforms: list = None, limit: int = None, source: str = "web"):
     """监控指定话题"""
 
     init_db()
@@ -29,7 +44,7 @@ def monitor_topic(topic: str, interval: int = None, platforms: list = None, limi
         try:
             # 1. 采集数据
             print(f"\n📡 {datetime.now().strftime('%H:%M:%S')} - 采集数据...")
-            articles = crawler.fetch_news(topic, limit=limit or MAX_ARTICLES)
+            articles = collect_articles(topic, limit=limit or MAX_ARTICLES, source=source)
             print(f"   采集到 {len(articles)} 篇文章")
 
             # 2. 分析情感
@@ -90,7 +105,7 @@ def monitor_topic(topic: str, interval: int = None, platforms: list = None, limi
             time.sleep(60)
 
 
-def run_once(topic: str, limit: int = None):
+def run_once(topic: str, limit: int = None, source: str = "web"):
     """单次运行"""
     init_db()
     crawler = Crawler()
@@ -102,7 +117,7 @@ def run_once(topic: str, limit: int = None):
 
     # 1. 采集数据
     print("📡 采集数据...")
-    articles = crawler.fetch_news(topic, limit=limit or MAX_ARTICLES)
+    articles = collect_articles(topic, limit=limit or MAX_ARTICLES, source=source)
     print(f"   采集到 {len(articles)} 篇文章")
 
     # 2. 分析情感
@@ -149,13 +164,15 @@ def main():
     parser.add_argument("--interval", "-i", type=int, default=DEFAULT_INTERVAL, help="监控间隔（分钟）")
     parser.add_argument("--once", action="store_true", help="单次运行")
     parser.add_argument("--limit", "-l", type=int, default=MAX_ARTICLES, help="最大文章数")
+    parser.add_argument("--source", "-s", choices=["web", "github"], default="web",
+                       help="数据源：web=Bing聚合搜索(默认) / github=GitHub平台舆情")
 
     args = parser.parse_args()
 
     if args.once:
-        run_once(args.topic, args.limit)
+        run_once(args.topic, args.limit, source=args.source)
     else:
-        monitor_topic(args.topic, args.interval, limit=args.limit)
+        monitor_topic(args.topic, args.interval, limit=args.limit, source=args.source)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """AI 舆情监控系统 - 数据库模块"""
 
+import json
 import sqlite3
 import os
 from datetime import datetime
@@ -61,6 +62,14 @@ def init_db():
         )
     ''')
 
+    # 旧版本数据库补齐 meta 列
+    try:
+        cols = [r[1] for r in cursor.execute("PRAGMA table_info(articles)").fetchall()]
+        if "meta" not in cols:
+            cursor.execute("ALTER TABLE articles ADD COLUMN meta TEXT")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -73,8 +82,8 @@ def save_article(article: Dict) -> int:
     try:
         cursor.execute('''
             INSERT OR REPLACE INTO articles
-            (title, content, source, url, sentiment_score, sentiment_label, keywords, collected_at, topic)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (title, content, source, url, sentiment_score, sentiment_label, keywords, meta, collected_at, topic)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             article.get("title", ""),
             article.get("content", ""),
@@ -83,9 +92,18 @@ def save_article(article: Dict) -> int:
             article.get("sentiment_score", 0),
             article.get("sentiment_label", "neutral"),
             article.get("keywords", ""),
+            json.dumps(article.get("meta") or {}, ensure_ascii=False) if article.get("meta") else None,
             article.get("collected_at", datetime.now().isoformat()),
             article.get("topic", "")
         ))
+
+        # 同一 url 只保留最新一条（articles 表无唯一约束，OR REPLACE 不会去重）
+        url, topic = article.get("url"), article.get("topic", "")
+        if url:
+            cursor.execute(
+                "DELETE FROM articles WHERE url = ? AND topic = ? AND id != ?",
+                (url, topic, cursor.lastrowid),
+            )
         conn.commit()
         return cursor.lastrowid
     finally:
@@ -130,8 +148,16 @@ def get_recent_articles(topic: str, limit: int = 50) -> List[Dict]:
             LIMIT ?
         ''', (topic, limit))
 
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+        out = []
+        for row in cursor.fetchall():
+            d = dict(row)
+            if d.get("meta"):
+                try:
+                    d["meta"] = json.loads(d["meta"])
+                except Exception:
+                    d["meta"] = {}
+            out.append(d)
+        return out
     finally:
         conn.close()
 
@@ -191,8 +217,16 @@ def get_top_keywords(topic: str, limit: int = 20) -> List[Dict]:
             LIMIT ?
         ''', (topic, limit))
 
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+        out = []
+        for row in cursor.fetchall():
+            d = dict(row)
+            if d.get("meta"):
+                try:
+                    d["meta"] = json.loads(d["meta"])
+                except Exception:
+                    d["meta"] = {}
+            out.append(d)
+        return out
     finally:
         conn.close()
 
