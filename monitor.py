@@ -122,7 +122,8 @@ def run_once(topic: str, limit: int = None):
     stats = get_stats(topic)
     print(f"\n📊 统计结果：")
     print(f"   总计：{stats['total']} 篇")
-    print(f"   平均情感：{stats.get('avg_sentiment', 0):.2f}")
+    avg = stats.get('avg_sentiment') or 0
+    print(f"   平均情感：{float(avg):.2f}")
     print(f"   正面：{stats.get('positive', 0)} 篇")
     print(f"   负面：{stats.get('negative', 0)} 篇")
     print(f"   中性：{stats.get('neutral', 0)} 篇")

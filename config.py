@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # LLM 配置
-LLM_API_KEY = ***"LLM_API_KEY", "")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "qwen-plus")
 

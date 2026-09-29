@@ -73,7 +73,7 @@ class SentimentAnalyzer:
             }
 
         except Exception as e:
-            print(f"AI 分析失败：{e}")
+            print(f"AI 分析失败（已回退基础分析）：{e}")
             return self._simple_analyze(text)
 
     def _simple_analyze(self, text: str) -> Dict:
@@ -159,7 +159,7 @@ class SentimentAnalyzer:
             return response.choices[0].message.content
 
         except Exception as e:
-            print(f"报告生成失败：{e}")
+            print(f"AI 报告生成失败，已回退基础报告：{e}")
             return self._simple_report(topic, articles, stats)
 
     def _simple_report(self, topic: str, articles: List[Dict], stats: Dict) -> str:

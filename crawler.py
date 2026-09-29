@@ -22,14 +22,21 @@ class Crawler:
         """抓取新闻"""
         articles = []
 
-        # 新华网
+        # Bing 搜索（主力源，稳定可抓）
+        try:
+            news = self._fetch_bing(topic, limit)
+            articles.extend(news)
+        except Exception as e:
+            print(f"Bing 搜索抓取失败：{e}")
+
+        # 新华网（JS 渲染页面，多数情况抓不到，保留兼底）
         try:
             news = self._fetch_xinhua(topic, limit)
             articles.extend(news)
         except Exception as e:
             print(f"新华网抓取失败：{e}")
 
-        # 人民网
+        # 人民网（SPA 页面，多数情况抓不到，保留兼底）
         try:
             news = self._fetch_people(topic, limit)
             articles.extend(news)
@@ -37,6 +44,52 @@ class Crawler:
             print(f"人民网抓取失败：{e}")
 
         return articles[:limit]
+
+    def _fetch_bing(self, topic: str, limit: int) -> List[Dict]:
+        """抓取 Bing 搜索结果（主数据源）"""
+        import urllib.parse
+        url = f"https://www.bing.com/search?q={urllib.parse.quote(topic)}"
+        response = self._request(url)
+
+        if not response:
+            return []
+
+        soup = BeautifulSoup(response.text, 'lxml')
+        articles = []
+
+        for item in soup.select('li.b_algo'):
+            # Bing 的 b_algo 里第一个 <a> 是域名徽章，真正的标题在 <h2> 内
+            h2 = item.find('h2')
+            a = h2.find('a') if h2 else item.select_one('h2 a')
+            if not a:
+                continue
+            title = a.get_text(strip=True)
+            link = a.get('href')
+
+            # 清理标题里的面包屑分隔符与省略号
+            for sep in ("\u203a", "›"):
+                if sep in title:
+                    title = title.split(sep)[-1].strip()
+            title = title.replace("\u2026", "").replace(" ...", "").strip()
+            if len(title) < 6:
+                continue
+
+            p = item.find('p')
+            snippet = p.get_text(strip=True) if p else ""
+
+            articles.append({
+                "title": title,
+                "content": snippet,
+                "source": "Bing",
+                "url": link,
+                "collected_at": datetime.now().isoformat(),
+                "topic": topic,
+            })
+
+            if len(articles) >= limit:
+                break
+
+        return articles
 
     def _fetch_xinhua(self, topic: str, limit: int) -> List[Dict]:
         """抓取新华网"""

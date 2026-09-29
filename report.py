@@ -1,49 +1,81 @@
-#!/usr/bin/env python3
-"""AI 舆情监控系统 - 报告生成"""
+"""AI 舆情监控系统 - 报告生成模块"""
 
-import argparse
 import os
 from datetime import datetime
 from typing import Dict, List
 
-from config import OUTPUT_DIR, REPORT_TEMPLATE
-from database import init_db, get_recent_articles, get_stats, get_top_keywords
+from config import OUTPUT_DIR
 from analyzer import SentimentAnalyzer
+from database import init_db, get_stats, get_recent_articles, get_top_keywords
 
 
 def generate_report(topic: str, date: str = None, output_format: str = "markdown") -> str:
     """生成报告"""
-
     init_db()
     analyzer = SentimentAnalyzer()
 
-    # 获取数据
     stats = get_stats(topic)
     articles = get_recent_articles(topic, limit=50)
     keywords = get_top_keywords(topic, limit=20)
 
-    # 生成报告
-    report = analyzer.generate_report(topic, articles, stats)
+    # AI 分析（无 key 时走兜底）
+    try:
+        report = analyzer.generate_report(topic, articles, stats)
+    except Exception as e:
+        report = f"（AI 分析生成失败，已跳过）{e}"
 
-    # 保存报告
+    date = date or datetime.now().strftime("%Y%m%d")
+
     if output_format == "markdown":
         return save_markdown_report(topic, date, report, stats, articles, keywords)
-    elif output_format == "html":
+    if output_format == "html":
         return save_html_report(topic, date, report, stats, articles, keywords)
-    else:
-        return report
+    return report
 
 
-def save_markdown_report(topic: str, date: str, report: str, stats: Dict, articles: List, keywords: List) -> str:
+def _fmt_stats(stats: Dict) -> Dict:
+    """把可能为 None 的统计值规整成可格式化类型"""
+    total = stats.get("total") or 0
+    avg = stats.get("avg_sentiment") or 0
+    pos = stats.get("positive") or 0
+    neg = stats.get("negative") or 0
+    neu = stats.get("neutral") or 0
+    denom = max(total, 1)
+    return {
+        "total": total,
+        "avg": float(avg),
+        "avg_str": f"{float(avg):.2f}",
+        "pos": pos,
+        "neg": neg,
+        "neu": neu,
+        "pos_pct": f"{pos / denom * 100:.1f}",
+        "neg_pct": f"{neg / denom * 100:.1f}",
+        "neu_pct": f"{neu / denom * 100:.1f}",
+    }
+
+
+def save_markdown_report(topic, date, report, stats, articles, keywords) -> str:
     """保存 Markdown 报告"""
-
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    filename = f"{OUTPUT_DIR}/{topic}_{date or datetime.now().strftime('%Y%m%d')}.md"
+    s = _fmt_stats(stats)
+    date_disp = datetime.now().strftime("%Y-%m-%d")
+
+    # 列表先算好，避免 f-string 里嵌复杂表达式
+    art_lines = []
+    for a in articles[:10]:
+        t = a.get("title") or ""
+        u = a.get("url") or ""
+        label = a.get("sentiment_label") or "neutral"
+        art_lines.append(f"- [{t}]({u}) - {label}")
+
+    kw_lines = []
+    for i, kw in enumerate(keywords, 1):
+        kw_lines.append(f"| {i} | {kw.get('keyword', '')} | {kw.get('count', 0)} |")
 
     content = f"""# 舆情分析报告
 
-**主题**: {topic}  
-**日期**: {date or datetime.now().strftime('%Y-%m-%d')}  
+**主题**: {topic}
+**日期**: {date_disp}
 **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ---
@@ -52,17 +84,17 @@ def save_markdown_report(topic: str, date: str, report: str, stats: Dict, articl
 
 | 指标 | 数值 |
 |------|------|
-| 文章总数 | {stats.get('total', 0)} |
-| 平均情感分 | {stats.get('avg_sentiment', 0):.2f} |
-| 正面文章 | {stats.get('positive', 0)} ({stats.get('positive', 0) / max(stats.get('total', 1), 1) * 100:.1f}%) |
-| 负面文章 | {stats.get('negative', 0)} ({stats.get('negative', 0) / max(stats.get('total', 1), 1) * 100:.1f}%) |
-| 中性文章 | {stats.get('neutral', 0)} ({stats.get('neutral', 0) / max(stats.get('total', 1), 1) * 100:.1f}%) |
+| 文章总数 | {s['total']} |
+| 平均情感分 | {s['avg_str']} |
+| 正面文章 | {s['pos']} ({s['pos_pct']}%) |
+| 负面文章 | {s['neg']} ({s['neg_pct']}%) |
+| 中性文章 | {s['neu']} ({s['neu_pct']}%) |
 
 ---
 
 ## 📰 最新舆情
 
-{chr(10).join([f"- [{a['title']}]({a.get('url', '')}) - {a.get('sentiment_label', 'neutral')}" for a in articles[:10]])}
+{chr(10).join(art_lines) if art_lines else '_（暂无数据）_'}
 
 ---
 
@@ -70,7 +102,7 @@ def save_markdown_report(topic: str, date: str, report: str, stats: Dict, articl
 
 | 排名 | 关键词 | 次数 |
 |------|--------|------|
-{chr(10).join([f"| {i} | {kw['keyword']} | {kw['count']} |" for i, kw in enumerate(keywords, 1)])}
+{chr(10).join(kw_lines) if kw_lines else '| - | - | - |'}
 
 ---
 
@@ -83,18 +115,34 @@ def save_markdown_report(topic: str, date: str, report: str, stats: Dict, articl
 *报告由 AI 舆情监控系统自动生成*
 """
 
-    with open(filename, 'w', encoding='utf-8') as f:
+    filename = f"{OUTPUT_DIR}/{topic}_{date}.md"
+    with open(filename, "w", encoding="utf-8") as f:
         f.write(content)
 
     print(f"✅ 报告已保存：{filename}")
     return filename
 
 
-def save_html_report(topic: str, date: str, report: str, stats: Dict, articles: List, keywords: List) -> str:
+def save_html_report(topic, date, report, stats, articles, keywords) -> str:
     """保存 HTML 报告"""
-
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    filename = f"{OUTPUT_DIR}/{topic}_{date or datetime.now().strftime('%Y%m%d')}.html"
+    s = _fmt_stats(stats)
+    date_disp = datetime.now().strftime("%Y-%m-%d")
+
+    art_items = []
+    for a in articles[:10]:
+        u = a.get("url") or "#"
+        t = a.get("title") or ""
+        label = a.get("sentiment_label") or "neutral"
+        art_items.append(
+            f'<div class="article"><a href="{u}">{t}</a> '
+            f'<span class="sentiment-{label}">{label}</span></div>'
+        )
+
+    kw_items = [
+        f'<li>{kw.get("keyword", "")} ({kw.get("count", 0)} 次)</li>'
+        for kw in keywords
+    ]
 
     content = f"""<!DOCTYPE html>
 <html>
@@ -102,71 +150,63 @@ def save_html_report(topic: str, date: str, report: str, stats: Dict, articles: 
     <meta charset="UTF-8">
     <title>舆情分析报告 - {topic}</title>
     <style>
-        body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }}
-        .header {{ background: #1890ff; color: white; padding: 20px; border-radius: 8px; }}
+        body {{ font-family: "PingFang SC", "Microsoft YaHei", Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f5f6fa; color: #333; }}
+        .header {{ background: #1890ff; color: white; padding: 24px; border-radius: 8px; }}
+        .header h1 {{ margin: 0 0 8px; }}
         .stats {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0; }}
-        .stat-card {{ background: #f0f0f0; padding: 15px; border-radius: 8px; text-align: center; }}
+        .stat-card {{ background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
         .stat-value {{ font-size: 24px; font-weight: bold; color: #1890ff; }}
-        .article {{ padding: 10px; border-bottom: 1px solid #eee; }}
-        .sentiment-positive {{ color: #52c41a; }}
-        .sentiment-negative {{ color: #ff4d4f; }}
+        .article {{ padding: 10px; background: white; border-bottom: 1px solid #eee; }}
+        .article a {{ color: #1890ff; text-decoration: none; }}
+        .sentiment-positive {{ color: #52c41a; font-weight: bold; }}
+        .sentiment-negative {{ color: #ff4d4f; font-weight: bold; }}
         .sentiment-neutral {{ color: #999; }}
+        .ai-box {{ background: white; padding: 16px; border-radius: 8px; white-space: pre-wrap; line-height: 1.7; }}
+        h2 {{ color: #333; border-left: 4px solid #1890ff; padding-left: 10px; }}
     </style>
 </head>
 <body>
     <div class="header">
         <h1>舆情分析报告</h1>
-        <p>主题：{topic} | 日期：{date or datetime.now().strftime('%Y-%m-%d')}</p>
+        <p>主题：{topic} | 日期：{date_disp}</p>
     </div>
 
     <div class="stats">
-        <div class="stat-card">
-            <div class="stat-value">{stats.get('total', 0)}</div>
-            <div>文章总数</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{stats.get('avg_sentiment', 0):.2f}</div>
-            <div>平均情感</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{stats.get('positive', 0)}</div>
-            <div>正面</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{stats.get('negative', 0)}</div>
-            <div>负面</div>
-        </div>
+        <div class="stat-card"><div class="stat-value">{s['total']}</div><div>文章总数</div></div>
+        <div class="stat-card"><div class="stat-value">{s['avg_str']}</div><div>平均情感</div></div>
+        <div class="stat-card"><div class="stat-value">{s['pos']}</div><div>正面</div></div>
+        <div class="stat-card"><div class="stat-value">{s['neg']}</div><div>负面</div></div>
     </div>
 
     <h2>📰 最新舆情</h2>
-    {''.join([f'<div class="article"><a href="{a.get(\"url\", \"\")}">{a["title"]}</a> <span class="sentiment-{a.get(\"sentiment_label\", \"neutral\")}">{a.get("sentiment_label", "neutral")}</span></div>' for a in articles[:10]])}
+    {''.join(art_items) if art_items else '<div class="article">（暂无数据）</div>'}
 
     <h2>🔥 热词排行</h2>
-    <ul>
-        {''.join([f'<li>{kw["keyword"]} ({kw["count"]} 次)</li>' for kw in keywords])}
-    </ul>
+    <ul>{''.join(kw_items) if kw_items else '<li>（暂无数据）</li>'}</ul>
 
     <h2>📝 AI 分析</h2>
-    <div>{report}</div>
+    <div class="ai-box">{report}</div>
 </body>
 </html>"""
 
-    with open(filename, 'w', encoding='utf-8') as f:
+    filename = f"{OUTPUT_DIR}/{topic}_{date}.html"
+    with open(filename, "w", encoding="utf-8") as f:
         f.write(content)
 
     print(f"✅ 报告已保存：{filename}")
     return filename
 
 
-def main():
-    parser = argparse.ArgumentParser(description="生成舆情报告")
-    parser.add_argument("--topic", "-t", type=str, required=True, help="话题")
-    parser.add_argument("--date", "-d", type=str, help="日期")
-    parser.add_argument("--format", "-f", type=str, choices=["markdown", "html"], default="markdown")
-
-    args = parser.parse_args()
-    generate_report(args.topic, args.date, args.format)
-
-
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="AI 舆情监控系统 - 报告生成")
+    parser.add_argument("--topic", "-t", type=str, required=True, help="监控话题")
+    parser.add_argument("--date", "-d", type=str, default=None, help="报告日期 YYYY-MM-DD")
+    parser.add_argument("--format", "-f", type=str, default="markdown", choices=["markdown", "html"])
+    args = parser.parse_args()
+
+    try:
+        generate_report(args.topic, args.date, args.format)
+    except Exception as e:
+        print(f"报告生成失败：{e}")
+        raise
