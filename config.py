@@ -9,7 +9,7 @@ load_dotenv()
 # LLM 配置
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "qwen-plus")
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "qwen3.8-flash")
 
 # 微信通知配置
 WECHAT_BOT_WEBHOOK = os.getenv("WECHAT_BOT_WEBHOOK", "")

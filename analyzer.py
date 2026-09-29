@@ -34,11 +34,20 @@ class SentimentAnalyzer:
             return self._simple_analyze(text)
 
         try:
-            prompt = f"""请分析以下文本的情感倾向，返回 JSON 格式：
-            {{"sentiment": "positive/negative/neutral", "score": 0.0-1.0, "keywords": ["关键词 1","关键词 2"]}}
+            prompt = f"""分析下面文本的情感倾向。
 
-            文本：
-            {text[:500]}"""
+输出规则（严格遵守）：
+- sentiment: positive / negative / neutral
+- score: 0.0 到 1.0 之间的小数。正面取 0.5 以上，负面取 0.5 以下，中性约 0.5。绝对值越大表示越确定。
+- keywords: 3 到 8 个最具代表性的词组，不要输出单字，不要输出"关键词"这种元词汇
+
+只返回一行紧凑 JSON，不要任何其他文字。
+
+示例：
+{{"sentiment": "negative", "score": 0.85, "keywords": ["投诉", "系统崩溃"]}}
+
+文本：
+{text[:500]}"""
 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -58,10 +67,27 @@ class SentimentAnalyzer:
             match = re.search(r'\{.*\}', result, re.DOTALL)
             if match:
                 data = json.loads(match.group())
+                label = str(data.get("sentiment", "neutral")).lower().strip()
+                if label not in ("positive", "negative", "neutral"):
+                    label = "neutral"
+                try:
+                    score = float(data.get("score", 0.5))
+                except (TypeError, ValueError):
+                    score = 0.5
+                score = max(0.0, min(1.0, score))
+
+                # 纠偏：label 与 score 语义冲突时按 label 修正（score 是极性坐标，不是置信度）
+                if label == "negative" and score > 0.5:
+                    score = 1.0 - score
+                elif label == "positive" and score < 0.5:
+                    score = 0.5 + (0.5 - score)
+                elif label == "neutral":
+                    score = round(score, 2)
+
                 return {
-                    "score": float(data.get("score", 0.5)),
-                    "label": data.get("sentiment", "neutral"),
-                    "keywords": data.get("keywords", []),
+                    "score": round(score, 2),
+                    "label": label,
+                    "keywords": [str(k).strip() for k in data.get("keywords", []) if str(k).strip()],
                     "analysis": result,
                 }
 
