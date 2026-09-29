@@ -30,6 +30,13 @@ def generate_report(topic: str, date: str = None, output_format: str = "markdown
         return save_markdown_report(topic, date, report, stats, articles, keywords)
     if output_format == "html":
         return save_html_report(topic, date, report, stats, articles, keywords)
+    if output_format == "excel":
+        return save_excel_report(topic, date, report, stats, articles, keywords)
+    if output_format == "all":
+        paths = [save_markdown_report(topic, date, report, stats, articles, keywords),
+                 save_html_report(topic, date, report, stats, articles, keywords),
+                 save_excel_report(topic, date, report, stats, articles, keywords)]
+        return "\n".join(paths)
     return report
 
 
@@ -161,6 +168,95 @@ def save_markdown_report(topic, date, report, stats, articles, keywords) -> str:
     return filename
 
 
+def save_excel_report(topic, date, report, stats, articles, keywords) -> str:
+    """导出 Excel 明细表（可直接用于工作台账/汇报附件）
+
+    三个工作表：
+    1. 统计概览 —— 一行汇总指标
+    2. 文章明细 —— 逐篇标题/来源/链接/情感分/关键词
+    3. 热词排行 —— 关键词频次
+    """
+    import pandas as pd
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    s = _fmt_stats(stats)
+    date_disp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    df_stats = pd.DataFrame([{
+        "主题": topic,
+        "报告日期": datetime.now().strftime("%Y-%m-%d"),
+        "生成时间": date_disp,
+        "文章总数": s["total"],
+        "平均情感分": float(s["avg"]),
+        "正面文章": s["pos"],
+        "正面占比": s["pos_pct"] + "%",
+        "负面文章": s["neg"],
+        "负面占比": s["neg_pct"] + "%",
+        "中性文章": s["neu"],
+        "中性占比": s["neu_pct"] + "%",
+        "预警触发": "是（平均情感 < 0.3）" if float(s["avg"]) < 0.3 else "否",
+    }])
+
+    rows = []
+    for a in articles:
+        meta = a.get("meta") or {}
+        if a.get("source") == "GitHub-仓库":
+            content = (f"星标 {meta.get('stars', 0)} | Forks {meta.get('forks', 0)} "
+                       f"| 待解决 issues {meta.get('open_issues', 0)}")
+        elif a.get("source") == "GitHub-Issue":
+            content = (f"评论 {meta.get('comments')} 条 | 标签 {meta.get('labels', '—')}\n"
+                       f"{a.get('content') or ''}").strip()
+        else:
+            content = a.get("content") or ""
+        rows.append({
+            "来源平台": a.get("source") or "",
+            "标题": a.get("title") or "",
+            "链接": a.get("url") or "",
+            "情感分": a.get("sentiment_score") if a.get("sentiment_score") is not None else "",
+            "情感标签": a.get("sentiment_label") or "",
+            "关键词": ", ".join(a.get("keywords") or []),
+            "采集时间": (a.get("collected_at") or "")[:19],
+            "正文摘要": content[:500],
+        })
+    df_articles = pd.DataFrame(rows)
+    if df_articles.empty:
+        df_articles = pd.DataFrame(columns=["来源平台", "标题", "链接", "情感分", "情感标签", "关键词", "采集时间", "正文摘要"])
+
+    df_kw = pd.DataFrame([
+        {"排名": i, "关键词": kw.get("keyword", ""), "出现次数": kw.get("count", 0)}
+        for i, kw in enumerate(keywords, 1)
+    ])
+    if df_kw.empty:
+        df_kw = pd.DataFrame(columns=["排名", "关键词", "出现次数"])
+
+    df_report = pd.DataFrame({"AI 综合分析": [report]})
+
+    filename = f"{OUTPUT_DIR}/{topic}_{date}.xlsx"
+    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
+        df_stats.to_excel(writer, sheet_name="统计概览", index=False)
+        df_articles.to_excel(writer, sheet_name="文章明细", index=False)
+        df_kw.to_excel(writer, sheet_name="热词排行", index=False)
+        df_report.to_excel(writer, sheet_name="AI综合分析", index=False)
+
+        # 列宽微调，避免交付时列被压成 ###
+        for name, widths in {
+            "统计概览": [16] * 12,
+            "文章明细": [18, 40, 45, 8, 10, 28, 20, 60],
+            "热词排行": [6, 24, 10],
+            "AI综合分析": [110],
+        }.items():
+            ws = writer.sheets[name]
+            from openpyxl.utils import get_column_letter
+            from openpyxl.styles import Alignment
+            for idx, w in enumerate(widths, 1):
+                ws.column_dimensions[get_column_letter(idx)].width = w
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    print(f"✅ Excel 已保存：{filename}（{len(df_articles)} 篇文章，{len(df_kw)} 个热词）")
+    return filename
+
+
 def save_html_report(topic, date, report, stats, articles, keywords) -> str:
     """保存 HTML 报告"""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -240,7 +336,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AI 舆情监控系统 - 报告生成")
     parser.add_argument("--topic", "-t", type=str, required=True, help="监控话题")
     parser.add_argument("--date", "-d", type=str, default=None, help="报告日期 YYYY-MM-DD")
-    parser.add_argument("--format", "-f", type=str, default="markdown", choices=["markdown", "html"])
+    parser.add_argument("--format", "-f", type=str, default="markdown",
+                        choices=["markdown", "html", "excel", "all"],
+                        help="markdown / html / excel / all（三种全出）")
     args = parser.parse_args()
 
     try:
